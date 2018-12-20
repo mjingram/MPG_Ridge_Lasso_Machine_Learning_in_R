@@ -1,0 +1,501 @@
+---
+title: "Project2Analysis"
+output: word_document
+author: Michael Ingram
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+How well can we predict MPG using OLS, Ridge, LASSO, PCR based on Minimizing Mean Squared Error using three error estimation techniques: AIC, BIC and RMSE (CV)
+
+### Data Set Up
+```{r}
+
+# load the library
+library(RCurl)
+# specify the URL for the MPG data CSV
+urlfile <-'https://archive.ics.uci.edu/ml/machine-learning-databases/auto-mpg/auto-mpg.data'
+# download the file
+downloaded <- getURL(urlfile, ssl.verifypeer=FALSE)
+# treat the text data as a steam so we can read from it
+connection <- textConnection(downloaded)
+# parse the downloaded data as CSV
+dataset <- read.table(connection ,header=FALSE)
+# preview the first 5 rows
+head(dataset)
+
+colnames(dataset)<-c("mpg", "cylinders", "displacement","horsepower", "weight", "accel", "model.year","origin", "car.name")
+MPGdat<-dataset
+##MPGdat$cylinders<-as.factor(MPGdat$cylinders)
+##MPGdat$model.year<-as.factor(MPGdat$model.year)
+MPGdat$origin<-as.factor(MPGdat$origin)
+## Some Horsepower Observations have empties
+badRows<-vector(mode="numeric", length=0)
+
+for (i in 1:length(dataset$horsepower)) {
+  if(dataset$horsepower[i]=="?"){
+    badRows<-c(badRows, i)
+  }
+}
+badRows
+## Remove Rows with empty horsepower observations
+for (i in 1:length(badRows)) {
+  MPGdat<-MPGdat[-c(badRows[i]),]
+}
+MPGdat$horsepower<-as.numeric(MPGdat$horsepower)
+
+## Histograms and tables for MPG data
+for (i in 1:8 ){
+  if(is.factor(MPGdat[,i])==FALSE){
+  hist(MPGdat[,i], main = colnames(MPGdat)[i])}
+  else{
+    if(i==2){print("cylinders:")}
+    if(i==7){print("model year:")}
+    if(i==8){print("origin:")}
+    print(table(MPGdat[,i]))
+  }
+}
+## Getting rid of 3 and 5 cyclinders
+for (i in 1:length(MPGdat$cylinders)) {
+  if(MPGdat$cylinders[i]==3){
+    MPGdat$cylinders[i]<-4
+  }
+  if(MPGdat$cylinders[i]==5){
+    MPGdat$cylinders[i]<-6
+  }
+  
+}
+table(MPGdat$cylinders)
+MPGdat$cylinders<-as.factor(MPGdat$cylinders)
+
+## Combining Model Years
+
+for (i in 1:length(MPGdat$model.year)) {
+  if(MPGdat$model.year[i]==70 | MPGdat$model.year[i]==71 | MPGdat$model.year[i]==72 | MPGdat$model.year[i]==73){
+    MPGdat$model.year[i]<-1
+  }
+  if(MPGdat$model.year[i]==74 | MPGdat$model.year[i]==75 | MPGdat$model.year[i]==76 | MPGdat$model.year[i]==77){
+    MPGdat$model.year[i]<-2
+  }
+   if(MPGdat$model.year[i]>=78 ){
+    MPGdat$model.year[i]<-3
+  }
+  
+}
+table(MPGdat$model.year)
+MPGdat$model.year<-as.factor(MPGdat$model.year)
+
+```
+
+### Training and Test Data
+```{r}
+require(caTools)
+set.seed(123)   #  set seed to ensure you always have same random numbers generated
+sample = sample.split(MPGdat,SplitRatio = 0.75) # splits the data in the ratio mentioned in SplitRatio. After splitting marks these rows as logical TRUE and the the remaining are marked as logical FALSE
+train =subset(MPGdat,sample ==TRUE)
+train$car.name=NULL
+# creates a training dataset named train with rows which are marked as TRUE
+test=subset(MPGdat, sample==FALSE)
+test$car.name=NULL
+# creates a test dataset named test with rows which are marked as FALSE
+
+require(caret)
+## standardizing test and training
+preprocessParams <- preProcess(train[,1:8], method=c("center", "scale"))
+print(preprocessParams)
+train.std <- predict(preprocessParams, train[,1:8])
+test.std<-predict(preprocessParams, test[,1:8])
+train<-train.std
+test<-test.std
+
+## Histograms and tables of train data
+for (i in 1:8 ){
+  if(is.factor(train[,i])==FALSE){
+  hist(train[,i], main = colnames(train)[i])}
+  else{
+    if(i==2){print("cylinders:")}
+    if(i==7){print("model year:")}
+    if(i==8){print("origin:")}
+    print(table(train[,i]))
+  }
+}
+
+##Histograms and tables of test
+for (i in 1:8 ){
+  if(is.factor(test[,i])==FALSE){
+  hist(test[,i], main = colnames(test)[i])}
+  else{
+    if(i==2){print("cylinders:")}
+    if(i==7){print("model year:")}
+    if(i==8){print("origin:")}
+    print(table(test[,i]))
+  }
+}
+
+```
+
+### Simple Linear Regression and Diagnostics
+```{r}
+require(car)
+require(MASS)
+mpgMod<-lm(mpg~. , data=train)
+summary(mpgMod) 
+vif(mpgMod)
+## StepAIC
+stepAIC(mpgMod, direction = "backward")
+stepAIC(mpgMod, direction = "both")
+## Throws out horsepower
+
+## Diagnostic Plots
+residualPlots(mpgMod)
+crPlots(mpgMod)
+ceresPlots(mpgMod)
+influenceIndexPlot(model = mpgMod, id.n = 5)
+
+## Predict on Test Set
+pMod1<-predict(mpgMod, test)
+actualsMod1<-data.frame(cbind(actuals=test$mpg, predicteds=pMod1))
+head(actualsMod1)
+EPEmod1<- mean( (test$mpg - pMod1)^2 )
+EPEmod1
+
+## Removing Horsepower based on StepAIC and pvalues
+mpgMod2<-lm(mpg~ cylinders + displacement + weight + accel + model.year + origin, data=train)
+
+summary(mpgMod2)
+
+stepAIC(mpgMod2, direction = "backward")
+stepAIC(mpgMod2, direction = "both")
+
+## Diagnostic Plots
+residualPlots(mpgMod2)
+crPlots(mpgMod2)
+ceresPlots(mpgMod2)
+
+
+## Predict on Test Data
+pMod2<-predict(mpgMod2, test)
+actualsMod2<-data.frame(cbind(actuals=test$mpg, predicteds=pMod2))
+head(actualsMod1)
+EPEmod2<- mean( (test$mpg - pMod2)^2 )
+EPEmod2
+
+## X^2 transformation of displacement
+mpgMod3<-lm(mpg~ cylinders + poly(displacement, degree = 2) + horsepower + weight + accel + model.year + origin, data=train)
+
+summary(mpgMod3)
+## StepAIC
+stepAIC(mpgMod3, direction = "backward")
+stepAIC(mpgMod3, direction = "both")
+## Removes origin and cylinders
+
+##Diagnostic Plots
+residualPlots(mpgMod3)
+crPlots(mpgMod3)
+
+
+##Predict On Test Data
+pMod3<-predict(mpgMod3, test)
+actualsMod3<-data.frame(cbind(actuals=test$mpg, predicteds=pMod3))
+head(actualsMod3)
+EPEmod3<- mean( (test$mpg - pMod3)^2 )
+EPEmod3
+
+## x^2 displacement with  origin and cylinders removed based on StepAIC
+mpgMod4<-lm(mpg~ poly(displacement, degree = 2) + weight + horsepower + accel + model.year, data=train)
+summary(mpgMod4)
+
+## StepAIC
+stepAIC(mpgMod4, direction = "backward")
+stepAIC(mpgMod4, direction = "both")
+
+## Diagnostic Plots
+residualPlots(mpgMod4)
+crPlots(mpgMod4)
+
+## Predict on Test Data
+pMod4<-predict(mpgMod4, test)
+actualsMod4<-data.frame(cbind(actuals=test$mpg, predicteds=pMod4))
+head(actualsMod4)
+EPEmod4<- mean( (test$mpg - pMod4)^2 )
+EPEmod4
+
+## R^2, AIC, BIC, EPE Results Comparison
+AdjR2<-c(summary(mpgMod)$adj.r.squared,summary(mpgMod2)$adj.r.squared, summary(mpgMod3)$adj.r.squared, summary(mpgMod4)$adj.r.squared)
+
+AdjR2
+
+LinRegAIC<-c(AIC(mpgMod), AIC(mpgMod2), AIC(mpgMod3), AIC(mpgMod4))
+
+LinRegAIC
+
+LinRegBIC<-c(BIC(mpgMod), BIC(mpgMod2), BIC(mpgMod3), BIC(mpgMod4))
+
+LinRegBIC
+
+LinRegEPE<-c(EPEmod1, EPEmod2, EPEmod3, EPEmod4)
+LinRegEPE
+
+## Mod4 Transformation has best Adjusted R^2, AIC, BIC
+## Mod2 has best EPE
+
+
+
+## x^2 transformation on weight
+mpgMod5<-lm(mpg~ cylinders + displacement + horsepower + poly(weight, degree =2) + accel + model.year + origin , data=train)
+
+summary(mpgMod5) 
+
+##StepAIC
+stepAIC(mpgMod5, direction = "backward")
+stepAIC(mpgMod5, direction = "both")
+## Removes displacement, hp, and cylinders
+
+## Diagnostic Plots
+residualPlots(mpgMod5)
+crPlots(mpgMod5)
+ceresPlots(mpgMod5)
+
+## Predict on Test Set
+pMod5<-predict(mpgMod5, test)
+actualsMod5<-data.frame(cbind(actuals=test$mpg, predicteds=pMod5))
+head(actualsMod5)
+EPEmod5<- mean( (test$mpg - pMod5)^2 )
+EPEmod5
+
+
+
+## weight X^2 w/ hp, displacement and cylinders thrown out from stepAIC
+mpgMod6<-lm(mpg~ accel+ poly(weight, degree = 2) + model.year + origin, data=train)
+
+summary(mpgMod6)
+
+stepAIC(mpgMod6, direction = "backward")
+stepAIC(mpgMod6, direction = "both")
+
+
+## Diagnostic Plots
+residualPlots(mpgMod6)
+crPlots(mpgMod6)
+
+## Predict on Test Data
+pMod6<-predict(mpgMod6, test)
+actualsMod6<-data.frame(cbind(actuals=test$mpg, predicteds=pMod6))
+head(actualsMod6)
+EPEmod6<- mean( (test$mpg - pMod6)^2 )
+EPEmod6
+
+
+
+## Results comparison
+AdjR2<-c(AdjR2, summary(mpgMod5)$adj.r.squared, summary(mpgMod6)$adj.r.squared)
+round(AdjR2, 3)
+LinRegAIC<-c(LinRegAIC, AIC(mpgMod5), AIC(mpgMod6))
+round(LinRegAIC, 3)
+LinRegBIC<-c(LinRegBIC, BIC(mpgMod5), BIC(mpgMod6))
+round(LinRegBIC, 3)
+LinRegEPE<-c(LinRegEPE,EPEmod5, EPEmod6)
+round(LinRegEPE, 3)
+
+
+## Model 6 has best AIC, BIC and EPE
+## Model 5 has best AdjR^2 
+
+```
+
+
+### Cross Validation of the six models
+```{r}
+library(caret)
+cv_10fold = trainControl(method = "cv", number = 10)
+cv_loo = trainControl(method = "LOOCV")
+cv_5fold = trainControl(method = "cv", number = 5)
+
+mpgModf1 = mpg~.
+mpgModf2 = mpg~ cylinders + displacement + weight + accel + model.year + origin
+mpgModf3 = mpg~ cylinders + poly(displacement, degree = 2) + horsepower + weight + accel + model.year + origin
+mpgModf4 = mpg~ poly(displacement, degree = 2) + weight + accel + model.year
+mpgModf5 = mpg~ cylinders + displacement + horsepower + poly(weight,degree = 2) + accel + model.year + origin
+mpgModf6 = mpg~ poly(weight, degree = 2) + model.year + origin
+
+## K=10 Cross Validation
+modela10 = train(mpgModf1, data = train, trControl = cv_10fold, 
+               method = "lm")
+modelb10 = train(mpgModf2, data = train, trControl = cv_10fold, 
+               method = "lm")
+modelc10 = train(mpgModf3, data = train, trControl = cv_10fold, 
+               method = "lm")
+modeld10 = train(mpgModf4, data = train, trControl = cv_10fold, 
+               method = "lm")
+modele10 = train(mpgModf5, data = train, trControl = cv_10fold, 
+               method = "lm")
+modelf10 = train(mpgModf6, data = train, trControl = cv_10fold, 
+               method = "lm")
+print(modela10) 
+print(modelb10)
+print(modelc10)
+print(modeld10)
+print(modele10) 
+print(modelf10)
+
+## K=N LOOCV
+
+modelaLOO = train(mpgModf1, data = train, trControl = cv_loo, 
+               method = "lm")
+modelbLOO = train(mpgModf2, data = train, trControl = cv_loo, 
+               method = "lm")
+modelcLOO = train(mpgModf3, data = train, trControl = cv_loo, 
+               method = "lm")
+modeldLOO = train(mpgModf4, data = train, trControl = cv_loo, 
+               method = "lm")
+modeleLOO = train(mpgModf5, data = train, trControl = cv_loo, 
+               method = "lm")
+modelfLOO = train(mpgModf6, data = train, trControl = cv_loo, 
+               method = "lm")
+print(modelaLOO) 
+print(modelbLOO)
+print(modelcLOO)
+print(modeldLOO)
+print(modeleLOO) 
+print(modelfLOO)
+
+## K=5 Fold Cross Validation 
+modela5 = train(mpgModf1, data = train, trControl = cv_5fold, 
+               method = "lm")
+modelb5 = train(mpgModf2, data = train, trControl = cv_5fold, 
+               method = "lm")
+modelc5 = train(mpgModf3, data = train, trControl = cv_5fold, 
+               method = "lm")
+modeld5 = train(mpgModf4, data = train, trControl = cv_5fold, 
+               method = "lm")
+modele5 = train(mpgModf5, data = train, trControl = cv_5fold, 
+               method = "lm")
+modelf5 = train(mpgModf6, data = train, trControl = cv_5fold, 
+               method = "lm")
+
+print(modela5) 
+print(modelb5)
+print(modelc5)
+print(modeld5)
+print(modele5) 
+print(modelf5)
+
+## Results Comparison
+tableColNames<-c("K10 RMSE", "K10 R^2", "K5 RMSE", "K5 R^2", "LOO RMSE", "LOO R^2")
+ModelA_CV<-c(modela10$results$RMSE, modela10$results$Rsquared, modela5$results$RMSE, modela5$results$Rsquared, modelaLOO$results$RMSE, modelaLOO$results$Rsquared)
+names(ModelA_CV)<-tableColNames
+
+
+ModelB_CV<-c(modelb10$results$RMSE, modelb10$results$Rsquared, modelb5$results$RMSE, modelb5$results$Rsquared, modelbLOO$results$RMSE, modelbLOO$results$Rsquared)
+names(ModelB_CV)<-tableColNames
+
+
+
+ModelC_CV<-c(modelc10$results$RMSE, modelc10$results$Rsquared, modelc5$results$RMSE, modelc5$results$Rsquared, modelcLOO$results$RMSE, modelcLOO$results$Rsquared)
+names(ModelC_CV)<-tableColNames
+
+ModelD_CV<-c(modeld10$results$RMSE, modeld10$results$Rsquared, modeld5$results$RMSE, modeld5$results$Rsquared, modeldLOO$results$RMSE, modeldLOO$results$Rsquared)
+names(ModelD_CV)<-tableColNames
+
+ModelE_CV<-c(modele10$results$RMSE, modele10$results$Rsquared, modele5$results$RMSE, modele5$results$Rsquared, modeleLOO$results$RMSE, modeleLOO$results$Rsquared)
+names(ModelE_CV)<-tableColNames
+
+ModelF_CV<-c(modelf10$results$RMSE, modelf10$results$Rsquared, modelf5$results$RMSE, modelf5$results$Rsquared, modelfLOO$results$RMSE, modelfLOO$results$Rsquared)
+names(ModelF_CV)<-tableColNames
+
+## Results Comparison Table
+
+CV_Results<-rbind(ModelA_CV, ModelB_CV, ModelC_CV, ModelD_CV, ModelE_CV, ModelF_CV)
+CV_Results
+
+## Cross-Validation Supports Model4 (x^2 transformation with stepAIC suggested predictors removed) as the "best" model
+
+```
+
+
+### Ridge Regression
+```{r}
+## Ridge Full Model
+library(glmnet)
+y<-train$mpg
+x<-data.matrix(train[,-1])
+lambda <- 10^seq(10, -2, length = 100)
+
+ridge.mod <- glmnet(x, y, alpha = 0, lambda = lambda)
+predict(ridge.mod, s = 0, exact = F, type = 'coefficients')[1:8,]
+
+cv.out <- cv.glmnet(x, y, alpha = 0)
+	
+bestlam <- cv.out$lambda.min
+xtest<-data.matrix(test[,-1])
+ridge.pred <- predict(ridge.mod, s = bestlam, newx = xtest)
+EPEridge=mean((ridge.pred-test$mpg)^2)
+round(EPEridge, 3)
+
+
+## weight^2 ridge model
+y<-train$mpg
+x<-data.matrix(train[,-1])
+weight2<-(x[,4]**2)
+xTrans<-cbind(x,weight2)
+
+lambda <- 10^seq(10, -2, length = 100)
+
+ridge.mod.2 <- glmnet(xTrans, y, alpha = 0, lambda = lambda)
+predict(ridge.mod.2, s = 0, exact = F, type = 'coefficients')[1:9,]
+
+cv.out.2 <- cv.glmnet(xTrans, y, alpha = 0)
+bestlam.2 <- cv.out.2$lambda.min
+xtest<-data.matrix(test[,-1])
+weight2Test<-(xtest[,4]**2)
+xtestTrans<-cbind(xtest,weight2Test)
+ridge.pred.2 <- predict(ridge.mod.2, s = bestlam, newx = xtestTrans)
+EPEridge.2=mean((ridge.pred.2-test$mpg)^2)
+round(EPEridge.2, 3)
+
+
+```
+
+## Lasso Regression
+
+```{r}
+## Lasso Full Model
+lasso.mod <- glmnet(x, y, alpha = 1, lambda = lambda)
+cv.out.l <- cv.glmnet(x, y, alpha = 1)
+	
+bestlam.l <- cv.out.l$lambda.min
+lasso.pred <- predict(lasso.mod, s = bestlam.l, newx = xtest)
+EPElasso=mean((lasso.pred-test$mpg)^2)
+round(EPElasso, 3)
+bestlam.l
+lasso.coef=predict(lasso.mod, type="coefficients", s=bestlam.l)[1:8,]
+lasso.coef[lasso.coef!=0]
+
+## weight^2 LASSO
+
+lasso.mod.2 <- glmnet(xTrans, y, alpha = 1, lambda = lambda)
+cv.out.l.2 <- cv.glmnet(xTrans, y, alpha = 1)
+	
+bestlam.l.2 <- cv.out.l.2$lambda.min
+lasso.pred.2 <- predict(lasso.mod.2, s = bestlam.l.2, newx = xtestTrans)
+EPElasso.2=mean((lasso.pred.2-test$mpg)^2)
+round(EPElasso.2, 3)
+bestlam.l.2
+lasso.coef.2=predict(lasso.mod.2, type="coefficients", s=bestlam.l.2)[1:9,]
+lasso.coef.2[lasso.coef!=0]
+
+```
+
+## Principle Component Analysis
+
+```{r}
+library(pls)
+pcr.mod<-pcr(mpg~., data=train, scale=TRUE, validation="CV")
+summary(pcr.mod)
+par(mfrow=c(1,1))
+validationplot(pcr.mod, val.type = "MSEP", main="Best Principle Components")
+```
+
+Best Principle Component is all the componenets meaning its the same as Oridinary Least Squares
